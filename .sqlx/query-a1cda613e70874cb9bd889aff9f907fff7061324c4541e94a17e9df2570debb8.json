@@ -1,0 +1,12 @@
+{
+  "db_name": "MySQL",
+  "query": "INSERT INTO mensagens (m_status, mensagem) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a1cda613e70874cb9bd889aff9f907fff7061324c4541e94a17e9df2570debb8"
+}
