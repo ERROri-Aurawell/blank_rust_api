@@ -46,23 +46,38 @@ async fn save_message(
     // Extrai o JSON do corpo da requisição e desserializa na struct Message
     AxumJson(payload): AxumJson<Message>,
 ) -> Json<&'static str> {
+    // -> impl IntoResponse
+    // use axum::http::StatusCode;
+    // use axum::response::IntoResponse;
+    // (StatusCode::INTERNAL_SERVER_ERROR, Json("Falha ao inserir mensagem no banco de dados."))
+
+
     println!(
         "Salvando mensagem com status: {}, conteúdo: {}",
         payload.status, payload.content
     );
 
+    //AVISO
+    //RustAnalyzer tenta conectar previamente, ignorá-lo se houver esse erro:
+    //error returned from database: 1045 (28000): Access denied for user 'root'@'localhost' (using password: YES)
+    //Insira suas credenciais do arquivo .env em .vscode/settings.json
+
     // Insere a mensagem no banco de dados
-    sqlx::query!(
+    let result = sqlx::query!(
         "INSERT INTO mensagens (m_status, mensagem) VALUES (?, ?)",
         payload.status,
         payload.content
     )
     .execute(&pool)
-    .await
-    .expect("Falha ao inserir mensagem no banco de dados");
+    .await;
 
-    // Retorna uma resposta de sucesso
-    Json("Mensagem salva com sucesso!")
+    match result {
+        Ok(_) => Json("Mensagem salva com sucesso!"),
+        Err(e) => {
+            eprintln!("Falha ao inserir mensagem no banco de dados: {}", e);
+            Json("Falha ao inserir mensagem no banco de dados.")
+        }
+    }
 }
 
 // Define a struct para montar e desmontar JSONs de mensagens
@@ -72,7 +87,6 @@ struct Message {
     content: String,
 }
 
-
 // Função principal + inicialização assíncrona (tokio)
 #[tokio::main]
 async fn main() {
@@ -81,11 +95,21 @@ async fn main() {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    // Cria o pool de conexões com o banco de dados MySQL
-    let pool = create_pool()
-        .await
-        .expect("Failed to create database pool.");
-
+    // Tenta criar o pool de conexões com o banco de dados.
+    // Em caso de falha, entra em um loop de tentativas a cada 5 segundos.
+    let pool = loop {
+        match create_pool().await {
+            Ok(pool) => {
+                println!("Conexão com o banco de dados estabelecida com sucesso.");
+                break pool;
+            }
+            Err(e) => {
+                eprintln!("Falha ao conectar ao banco de dados: {}. Tentando novamente em 5 segundos... Verifique suas variaveis de ambiente", e);
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+        }
+    };
+        
     // Inicializa a camada do SocketIo
     let (layer, io) = SocketIo::new_layer();
 
@@ -123,7 +147,7 @@ async fn main() {
     //.route( rota, método( chamada ) ) adiciona rotas HTTP.
     //.layer( camada ) adiciona camadas (middleware) como Socket.IO, CORS
     //.with_state( variável ) adiciona variaveis "globais" (compartilhadas) para os handlers.
- 
+
     // Inicia o servidor no endereço local, na porta 9000
     let listener = tokio::net::TcpListener::bind("127.0.0.1:9000")
         .await

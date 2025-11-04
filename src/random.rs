@@ -1,4 +1,3 @@
-// Lógica para aleatorizar cartas
 use rand::prelude::SliceRandom;
 
 pub fn sort_cards(deck: &mut Vec<u8>) -> [u8; 4] {
@@ -14,4 +13,4 @@ pub fn sort_cards(deck: &mut Vec<u8>) -> [u8; 4] {
     pares
 }
 
-// Essa função não é usada, mas pode ser útil no futuro
+// Essa função não faz parte do projeto, favor desconsiderar.

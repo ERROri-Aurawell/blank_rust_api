@@ -65,6 +65,13 @@ pub fn on_connect(socket: SocketRef, Data(data): Data<Value>, pool: MySqlPool, i
                 Ok(payload) => {
                     println!("Payload deserializado com sucesso: {:?}", payload.content);
 
+                    //AVISO
+                    //RustAnalyzer tenta conectar previamente, ignorá-lo se houver esse erro:
+                    //error returned from database: 1045 (28000): Access denied for user 'root'@'localhost' (using password: YES)
+                    //Insira suas credenciais do arquivo .env em ../.vscode/settings.json
+
+                    //O motivo técnico se encontra no arquivo Analyzer.md
+
                     // Insere a mensagem no banco de dados
                     let result = sqlx::query!(
                         "INSERT INTO mensagens (m_status, mensagem) VALUES (?, ?)",
