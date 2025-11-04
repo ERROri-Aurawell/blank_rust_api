@@ -14,6 +14,10 @@ use socketioxide::{
     extract::{Data, SocketRef},
 };
 
+// Importa a struct `AppState` que define o estado compartilhado da aplicação.
+// Isso permite que os handlers de rota acessem dados como o contador e o canal mpsc.
+use crate::state::AppState;
+
 // SQLx para conexão com MySQL
 use sqlx::MySqlPool;
 
@@ -32,7 +36,13 @@ async fn broadcast_event(io: SocketIo) {
 }
 
 // Modelo handler para evento de conexão Socket.IO
-pub fn on_connect(socket: SocketRef, Data(data): Data<Value>, pool: MySqlPool, io: SocketIo) {
+pub fn on_connect(
+    socket: SocketRef,
+    Data(data): Data<Value>,
+    pool: MySqlPool,
+    io: SocketIo,
+    state: AppState,
+) {
     println!("Socket.IO conectado: {:?} {:?}", socket.ns(), socket.id);
     println!("Dados de autenticação: {:?}", data);
 
@@ -41,6 +51,21 @@ pub fn on_connect(socket: SocketRef, Data(data): Data<Value>, pool: MySqlPool, i
     socket
         .emit("response", "Conexão estabelecida com sucesso!")
         .ok();
+
+    // Prepara o handler para o evento "Click" vindo do cliente.
+    // 1. Clonamos o `sender` (que é um `Arc`). Isso incrementa a contagem de referências,
+    //    permitindo que este closure `move` se aproprie de uma referência ao sender.
+    //    Cada conexão de socket terá sua própria referência clonada.
+    let sender = state.sender.clone();
+    socket.on("Click", move |_: Data<Value>| {
+        // 2. Clonamos o sender novamente para movê-lo para a nova tarefa assíncrona.
+        let sender = sender.clone();
+        tokio::spawn(async move{
+            // 3. Bloqueamos o Mutex para obter acesso exclusivo ao sender e enviamos
+            //    um evento `()` pelo canal mpsc. O `.await` pausa a tarefa se o lock já estiver pego.
+            let _ = sender.lock().await.send(()).await;
+        });
+    });
 
     // Exemplo de como usar o `io` para broadcast
     // tokio::spawn é necessário porque broadcast_event é async
@@ -68,7 +93,7 @@ pub fn on_connect(socket: SocketRef, Data(data): Data<Value>, pool: MySqlPool, i
                     //AVISO
                     //RustAnalyzer tenta conectar previamente, ignorá-lo se houver esse erro:
                     //error returned from database: 1045 (28000): Access denied for user 'root'@'localhost' (using password: YES)
-                    //Insira suas credenciais do arquivo .env em ../.vscode/settings.json
+                    //Insira suas credenciais do arquivo .env em .vscode/settings.json
 
                     //O motivo técnico se encontra no arquivo Analyzer.md
 
