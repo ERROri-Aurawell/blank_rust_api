@@ -10,6 +10,8 @@ mod routes;
 // conexão com o módulo de estado (fila)
 mod state;
 
+mod state2;
+
 // Importações necessárias :
 
 // `AppState` é a struct que contém nosso estado compartilhado.
@@ -19,6 +21,8 @@ mod state;
 use state::{AppState, ClickEvent};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
+
+use state2::{AppState2, ClickQuantity};
 
 // Mysql
 use sqlx::MySqlPool;
@@ -122,6 +126,18 @@ async fn main() {
         counter: counter.clone(),
     };
 
+
+    // Configuração do segundo estado compartilhado (state_2).
+    // Esta estrutura é semelhante à primeira, mas gerencia um tipo de evento diferente (`ClickQuantity`),
+    // que carrega um valor `i32`. Isso demonstra como a aplicação pode lidar com múltiplos
+    // fluxos de eventos de forma independente.
+    let (tx_2, mut rx_2) = mpsc::channel::<ClickQuantity>(100);
+    let state_2 = AppState2 {
+        sender: Arc::new(tx_2),
+        // Este contador não está sendo usado atualmente, mas foi incluído na struct.
+        counter: Arc::new(Mutex::new(0)), 
+    };
+
     // Tenta criar o pool de conexões com o banco de dados.
     // Em caso de falha, entra em um loop de tentativas a cada 5 segundos.
     let pool = loop {
@@ -146,22 +162,33 @@ async fn main() {
     // Clona o `io` para uso dentro do closure
     let io_clone = io.clone();
     let io_clone_2 = io.clone();
+    let io_clone_3 = io.clone();
 
     // Clona a Pool para uso dentro do closure
     let pool_clone = pool.clone();
 
+    // Clona os estados para serem movidos para o handler de conexão do Socket.IO.
+    // `Arc` permite clonagens "baratas" que apenas incrementam a contagem de referências,
+    // permitindo que o mesmo estado seja acessado de múltiplos locais concorrentemente.
     let state_clone = state.clone();
+    let state_2_clone = state_2.clone();
 
     // Define o handler de conexão socket o namespace padrão "/"
     io.ns(
         "/",
         move |socket: SocketRef, data: Data<serde_json::Value>| {
             // Chama a lógica real do handler
-            routes::on_connect(socket, data, pool_clone, io_clone, state_clone);
+            routes::on_connect(
+                socket,
+                data,
+                pool_clone,
+                io_clone,
+                state_clone,
+                state_2_clone,
+            );
         },
     );
 
-    
     // Esta tarefa (task) atua como o "consumidor" do nosso canal mpsc.
     // Ela roda em segundo plano, independente do servidor web.
     let io_for_task = state.clone();
@@ -185,23 +212,42 @@ async fn main() {
         }
     });
 
+    // Tarefa (task) consumidora para o segundo canal (rx_2).
+    // Ela aguarda por valores `ClickQuantity` (i32) enviados pelo evento "dynamic" do socket.
+    tokio::spawn(async move {
+        while let Some(valor) = rx_2.recv().await {
+            println!("Valor recebido do evento 'dynamic': {valor}");
+            // Aqui, o valor recebido é retransmitido para todos os clientes
+            // através do evento "update_2". Uma lógica de negócio mais complexa
+            // poderia ser implementada, como atualizar um contador ou estado no servidor.
+            io_clone_3
+            .of("/")
+            .unwrap()
+            .emit("update_2", &serde_json::json!({ "value": valor }))
+            .await
+            .ok();
+        }
+    });
+
     // Criar uma camada CORS permissiva para desenvolvimento
     let cors = CorsLayer::new()
         .allow_origin(Any) // Permite qualquer origem
         .allow_methods(Any) // Permite qualquer método (GET, POST, etc.)
         .allow_headers(Any); // Permite qualquer cabeçalho
 
-    //1:Monta a aplicação Axum.
-    //2:Adiciona as rotas HTTP "/" e "/save_message".
-    //3:Adiciona a camada Socket.IO.
-    //4:Adiciona a camada Pool do banco de dados
+    //1: Monta a aplicação Axum.
+    //2: Adiciona as rotas HTTP "/" e "/save_message".
+    //3: Adiciona a camada Socket.IO (`layer`).
+    //4: Adiciona o pool de conexões do banco de dados como estado gerenciado por Axum (`with_state`).
     //5:
+    //6: 
     let app = Router::new()
         .route("/", get(root))
         .route("/save_message", post(save_message))
         .layer(layer)
         .with_state(pool)
-        .layer(Extension(state));
+        .layer(Extension(state))
+        .layer(Extension(state_2));
 
     //.route( rota, método( chamada ) ) adiciona rotas HTTP.
     //.layer( camada ) adiciona camadas (middleware) como Socket.IO, CORS

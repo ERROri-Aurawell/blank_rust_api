@@ -18,6 +18,8 @@ use socketioxide::{
 // Isso permite que os handlers de rota acessem dados como o contador e o canal mpsc.
 use crate::state::AppState;
 
+use crate::state2::AppState2;
+
 // SQLx para conexão com MySQL
 use sqlx::MySqlPool;
 
@@ -26,6 +28,13 @@ use sqlx::MySqlPool;
 struct Message {
     status: String,
     content: String,
+}
+
+// Estrutura para deserializar dados do evento "dynamic" do cliente.
+// Espera um JSON no formato: { "numero": 123 }
+#[derive(Deserialize, Serialize)]
+struct Entrada {
+    numero: i32,
 }
 
 // Modelo de evento brodcast para todos os clientes conectados
@@ -38,13 +47,14 @@ async fn broadcast_event(io: SocketIo) {
 // Modelo handler para evento de conexão Socket.IO
 pub fn on_connect(
     socket: SocketRef,
-    Data(data): Data<Value>,
+    Data(_data): Data<Value>,
     pool: MySqlPool,
     io: SocketIo,
     state: AppState,
+    state_2: AppState2,
 ) {
-    println!("Socket.IO conectado: {:?} {:?}", socket.ns(), socket.id);
-    println!("Dados de autenticação: {:?}", data);
+    //println!("Socket.IO conectado: {:?} {:?}", socket.ns(), socket.id);
+    //println!("Dados de autenticação: {:?}", data);
 
     // Envia uma mensagem de boas-vindas ao cliente conectado
     // socket.emit( evento, dados )
@@ -60,11 +70,32 @@ pub fn on_connect(
     socket.on("Click", move |_: Data<Value>| {
         // 2. Clonamos o sender novamente para movê-lo para a nova tarefa assíncrona.
         let sender = sender.clone();
-        tokio::spawn(async move{
+        tokio::spawn(async move {
             // 3. Bloqueamos o Mutex para obter acesso exclusivo ao sender e enviamos
             //    um evento `()` pelo canal mpsc. O `.await` pausa a tarefa se o lock já estiver pego.
             let _ = sender.lock().await.send(()).await;
         });
+    });
+
+    let sender_2 = state_2.sender.clone();
+
+    // Define o handler para o evento "dynamic".
+    // Este handler espera receber um JSON com um campo "numero".
+    socket.on("dynamic", move |Data::<Value>(data_2)| {
+        // Tenta deserializar o `serde_json::Value` recebido na struct `Entrada`.
+        if let Ok(payload) = serde_json::from_value::<Entrada>(data_2) {
+            // Clona o sender para movê-lo para a nova tarefa assíncrona.
+            let sender = sender_2.clone();
+            tokio::spawn(async move {
+                // Envia o número recebido (`payload.numero`) através do segundo canal (mpsc).
+                // A tarefa consumidora em `main.rs` receberá este valor.
+                if let Err(e) = sender.send(payload.numero).await {
+                    eprintln!("Erro ao enviar para fila: {}", e);
+                }
+            });
+        } else {
+            eprintln!("Erro ao deserializar payload");
+        }
     });
 
     // Exemplo de como usar o `io` para broadcast

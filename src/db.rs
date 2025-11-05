@@ -12,10 +12,11 @@ pub async fn create_pool() -> Result<MySqlPool, sqlx::Error> {
     dotenv().ok();
 
     // Lê a variável de ambiente DATABASE_URL
+    // Se a variável não estiver definida, `env::var` retorna um erro.
+    // Usamos `map_err` para logar uma mensagem amigável e transformar o erro original
+    // em um `sqlx::Error`, que é o tipo de erro esperado pela função.
     let database_url = env::var("DATABASE_URL").map_err(|e| {
         eprintln!("Erro ao ler DATABASE_URL: {}", e);
-
-        // Retorna um erro sqlx genérico se a variável não estiver definida
         sqlx::Error::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "DATABASE_URL not set",
